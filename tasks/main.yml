@@ -1,0 +1,63 @@
+---
+# Ansible role
+#
+# Deploy Snipe-IT web application
+
+- name: Ignore filemode in all git subrepos
+  command: >
+    find {{ item.webroot }} -name config -type f -exec sed -i 's/filemode = true/filemode = false/g' {} +
+  changed_when: false
+  become_user: '{{ item.user | default("www-data") }}'
+  loop: '{{ snipeit.instances }}'
+
+- name: Deploy from git
+  environment: '{{ proxy_env | default({}) }}'
+  git:
+    repo: '{{ snipeit.repo }}'
+    dest: '{{ item.webroot }}'
+    version: '{{ snipeit.version | default(omit) }}'
+    force: true
+  become_user: '{{ item.user | default("www-data") }}'
+  loop: '{{ snipeit.instances }}'
+
+- name: Create .env config file
+  template:
+    src: 'env.j2'
+    dest: '{{ item.webroot }}/.env'
+    owner: '{{ item.user | default("www-data") }}'
+    group: '{{ item.group | default("www-data") }}'
+    mode: '0660'
+  loop: '{{ snipeit.instances }}'
+  tags:
+    - snipeit-config
+
+- name: Install dependencies
+  environment: '{{ proxy_env | default({}) }}'
+  composer:
+    command: 'install'
+    working_dir: '{{ item.webroot }}'
+    prefer_source: true
+  become_user: '{{ item.user | default("www-data") }}'
+  loop: '{{ snipeit.instances }}'
+
+- name: Upgrading to a new version
+  block:
+  - name: Backup database before upgrade
+    mysql_db:
+      state: 'dump'
+      name: '{{ item.database.name }}'
+      target: '{{ item.database.dump_path | default("/var/backups/" + item.database.name + "_preupgrade.sql") }}'
+    loop: '{{ snipeit.instances }}'
+
+  - name: Migrate to a new version
+    command: '/usr/bin/php {{ item[0].webroot }}/artisan --no-interaction {{ item[1] }}'
+    become_user: '{{ item[0].user | default("www-data") }}'
+    with_nested:
+      - '{{ snipeit.instances }}'
+      - [ 'migrate --force', 'config:clear', 'config:cache' ]
+
+  when: update | default(false) | bool
+  tags:
+    - snipeit-upgrade
+
+...

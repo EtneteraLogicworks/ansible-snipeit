@@ -1,0 +1,9 @@
+---
+# Ansible vars
+#
+# Default variables for snipeit role
+
+snipeit:
+  repo: 'https://github.com/snipe/snipe-it'
+
+...
